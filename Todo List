@@ -1,0 +1,225 @@
+# Todo-List
+<div class="toDoInner">
+  <h1 class="toDoTitle">My to-dos</h1>
+  <form class="toDoForm" #createForm="ngForm">
+    <input
+      type="text"
+      class="createInput"
+      name="createTask"
+      (keyup.enter)="createTask(createForm)"
+      ngModel
+      placeholder="Create a new to-do..."
+    />
+    <button (click)="createTask(createForm)" class="saveButton">Save</button>
+  </form>
+  <ul class="taskList">
+    <ng-container *ngFor="let task of taskList">
+      <li class="taskListItem" *ngIf="!task.deleted">
+        <app-task [task]="task"></app-task>
+      </li>
+    </ng-container>
+  </ul>
+</div>
+import { Component, OnInit } from '@angular/core';
+import { NgForm } from '@angular/forms';
+import { TaskService } from '../services/task.service';
+import { Task } from '../taskType';
+
+@Component({
+  selector: 'app-to-do',
+  templateUrl: './to-do.component.html',
+  styleUrls: ['./to-do.component.scss'],
+  providers: [TaskService],
+  host: {
+    class: 'container',
+  },
+})
+export class ToDoComponent implements OnInit {
+  taskList: Task[];
+
+  constructor(private taskService: TaskService) {}
+
+  ngOnInit(): void {
+    this.taskService
+      .getTasksList()
+      .subscribe((taskList: Task[]) => (this.taskList = taskList));
+  }
+
+  createTask(form: NgForm) {
+    const taskName = form.controls.createTask.value;
+    if (taskName === '') return;
+
+    const task = {
+      name: taskName,
+      completed: false,
+      deleted: false,
+    };
+    this.taskService
+      .addTask(task)
+      .subscribe((task) => this.taskList.push(task));
+
+    form.controls.createTask.reset();
+  }
+}
+const mongoose = require('mongoose');
+const Schema = mongoose.Schema;
+
+const TaskSchema = new Schema({
+  name: { type: String, required: true },
+  completed: { type: Boolean, required: true },
+  deleted: { type: Boolean, required: true }
+});
+
+module.exports = mongoose.model('Task', TaskSchema);
+const express = require('express');
+const Task = require('../model/task.model');
+const router = express.Router();
+
+router.get('/', async (req, res, next) => {
+  const tasks = await Task.find({});
+  res.json(
+    tasks.map(({ _id: id, completed, deleted, name }) => ({
+      id,
+      completed,
+      deleted,
+      name,
+    }))
+  );
+});
+
+router.get('/removed', async (req, res, next) => {
+  const tasks = await Task.find({ deleted: true }).exec();
+
+  res.json(
+    tasks.map(({ _id: id, completed, deleted, name }) => ({
+      id,
+      completed,
+      deleted,
+      name,
+    }))
+  );
+});
+
+router.post('/', async (req, res, next) => {
+  const task = req.body;
+
+  if (
+    !task ||
+    typeof task.name !== 'string' ||
+    typeof task.completed !== 'boolean' ||
+    typeof task.deleted !== 'boolean'
+  ) {
+    return res.sendStatus(404);
+  }
+
+  const taskModel = new Task({
+    name: task.name,
+    completed: task.completed,
+    deleted: task.deleted,
+  });
+
+  const { _id: id, completed, deleted, name } = await taskModel.save();
+
+  return res.json({ id, completed, deleted, name });
+});
+
+router.patch('/', async (req, res, next) => {
+  const task = req.body;
+
+  if (
+    !task ||
+    typeof task.id !== 'string' ||
+    typeof task.name !== 'string' ||
+    typeof task.completed !== 'boolean' ||
+    typeof task.deleted !== 'boolean'
+  ) {
+    return res.sendStatus(404);
+  }
+
+  const updateDoc = {
+    name: task.name,
+    completed: task.completed,
+    deleted: task.deleted,
+  };
+
+  const result = await Task.findByIdAndUpdate(task.id, updateDoc);
+  console.dir(result);
+  if (!result) {
+    return res.sendStatus(404);
+  }
+
+  return res.json({ result: true });
+});
+
+router.delete('/:id', async (req, res, next) => {
+  if (!req.body || typeof req.params.id !== 'string') {
+    return res.sendStatus(404);
+  }
+
+  const result = await Task.findByIdAndUpdate(req.params.id, {
+    deleted: true,
+  });
+
+  if (!result) {
+    return res.sendStatus(404);
+  }
+
+  return res.json({ result: true });
+});
+
+module.exports = router;
+const createError = require('http-errors');
+const express = require('express');
+const cookieParser = require('cookie-parser');
+const logger = require('morgan');
+const mongoose = require('mongoose');
+const mongoDB = 'mongodb://localhost:27017/toDo';
+
+const tasksRouter = require('./routes/tasks');
+const userRouter = require('./routes/user');
+
+const app = express();
+
+mongoose.connect(mongoDB);
+const db = mongoose.connection;
+
+db.on('error', console.error.bind(console, 'MongoDB connection error:'));
+
+app.use(logger('dev'));
+app.use(express.json());
+app.use(express.urlencoded({ extended: false }));
+app.use(cookieParser());
+
+app.use((req, res, next) => {
+  res.set('Access-Control-Allow-Origin', 'http://localhost:4200');
+  res.set(
+    'Access-Control-Allow-Headers',
+    'Origin, X-Requested-With, Content-Type'
+  );
+  res.set(
+    'Access-Control-Allow-Methods',
+    'GET, PATCH, PUT, POST, DELETE, OPTIONS'
+  );
+  next();
+});
+
+app.options('/tasks', (req, res) => {
+  res.sendStatus(200);
+});
+
+app.use('/tasks', tasksRouter);
+app.use('/user', userRouter);
+
+app.use(function (req, res, next) {
+  next(createError(404));
+});
+
+app.use(function (err, req, res, next) {
+  const message = err.message;
+  const error = req.app.get('env') === 'development' ? err : {};
+
+  res.status(err.status || 500);
+  res.json({ error, message });
+});
+
+module.exports = app;
